@@ -14,7 +14,7 @@ from pathlib import Path
 def fusionner_scores(df_bert: pd.DataFrame, df_gold: pd.DataFrame) -> pd.DataFrame:
     """Fusionne les deux DataFrames sur l'index (mot)."""
     df = df_bert[["score_polysemie", "mean_sim", "spread"]].join(
-        df_gold[["n_synsets_en", "n_sens_manuel", "score_gold"]], how="inner"
+        df_gold[["n_sens_manuel", "score_gold"]], how="inner"
     )
     df.dropna(subset=["score_polysemie", "score_gold"], inplace=True)
     return df
@@ -26,7 +26,7 @@ def calculer_correlations(df: pd.DataFrame) -> dict:
     et le gold standard.
     """
     metriques_bert = ["score_polysemie", "mean_sim", "spread"]
-    gold_cols      = ["score_gold", "n_synsets_en", "n_sens_manuel"]
+    gold_cols      = ["score_gold", "n_sens_manuel"]
     resultats = {}
 
     print("\n Corrélations entre métriques BERT et gold standard :\n")
@@ -140,12 +140,12 @@ def figure_comparaison_barres(df: pd.DataFrame, dossier: str = "resultats/figure
 def figure_heatmap_correlations(df: pd.DataFrame, dossier: str = "resultats/figures"):
     """Heatmap de la matrice de corrélation (Spearman) entre toutes les métriques."""
     Path(dossier).mkdir(parents=True, exist_ok=True)
-    cols = ["score_polysemie", "mean_sim", "spread", "score_gold", "n_synsets_en", "n_sens_manuel"]
+    cols = ["score_polysemie", "mean_sim", "spread", "score_gold", "n_sens_manuel"]
     df_sub = df[cols].dropna()
 
     corr_mat = df_sub.corr(method="spearman")
     etiquettes = ["Score std BERT", "Mean sim BERT", "Spread BERT",
-                  "Gold normalisé", "Synsets EN", "Sens FR"]
+                  "Gold normalisé", "Sens FR (TLFi)"]
 
     fig, ax = plt.subplots(figsize=(8, 7))
     mask = np.triu(np.ones_like(corr_mat, dtype=bool), k=1)
@@ -171,7 +171,7 @@ def sauvegarder_resultats(df: pd.DataFrame, correlations: dict, dossier: str = "
     # Convertir les valeurs numpy en float pour JSON
     corr_serialisable = {k: {kk: float(vv) for kk, vv in v.items() if kk != "sig"}
                          for k, v in correlations.items()}
-    with open(Path(dossier) / "correlations.json", "w") as f:
+    with open(Path(dossier) / "correlations.json", "w", encoding="utf-8") as f:
         json.dump(corr_serialisable, f, indent=2)
     print(f"\n Résultats finaux sauvegardés dans « {dossier}/ »")
 
@@ -181,7 +181,7 @@ def sauvegarder_resultats(df: pd.DataFrame, correlations: dict, dossier: str = "
 # ─────────────────────────────────────────────
 if __name__ == "__main__":
     from scores import charger_scores
-    from gold_standard import charger_gold_standard
+    from gold_manuel import charger_gold_standard
 
     df_bert = charger_scores("resultats")
     df_gold = charger_gold_standard("resultats")
@@ -198,4 +198,4 @@ if __name__ == "__main__":
     figure_heatmap_correlations(df)
     sauvegarder_resultats(df, correlations)
 
-    print("\n Corrélation terminée.")
+    print("\n Étape 7 terminée.")

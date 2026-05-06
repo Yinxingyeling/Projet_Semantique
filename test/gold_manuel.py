@@ -1,44 +1,19 @@
 """
 Étape 6 — Mesure de référence linguistique.
-Stratégie en cascade :
-  1. WOLF (WordNet du français) via fichier XML si disponible
-  2. WordNet anglais via NLTK + traduction manuelle
-  3. Score manuel si tout échoue (fallback)
+Gold standard basé sur les dictionnaires français (TLFi, Larousse) :
+nombre d'acceptions distinctes recensées pour chaque mot du corpus.
 """
 
-import json
-import re
-import math
 import numpy as np
 import pandas as pd
 from pathlib import Path
 
 
 # ─────────────────────────────────────────────
-# Traduction française → anglaise pour WordNet EN
+# Scores basés sur les dictionnaires français
+# Source : TLFi (Trésor de la Langue Française informatisé) et Larousse
+# Chaque entrée = nombre de sens / acceptions distincts recensés
 # ─────────────────────────────────────────────
-TRADUCTIONS_EN = {
-    "patron":  "patron",   # patron, boss, template
-    "bouton":  "button",   # button, pimple, bud
-    "feuille": "leaf",     # leaf, sheet, page
-    "coup":    "blow",     # blow, hit, stroke, move, shot...
-    "cœur":    "heart",    # heart (anatomique + figuré)
-    "maison":  "house",    # house, home
-    "vague":   "wave",     # wave, vague, surge
-    "rayon":   "ray",      # ray, shelf, radius, department
-    "verre":   "glass",    # glass (matière, récipient, lunettes)
-    "lettre":  "letter",   # letter (courrier + alphabet + littérature)
-    "mousse":  "foam",     # foam, moss, cabin boy
-    "corps":   "body",     # body, corps, substance
-    "carte":   "card",     # card, map, menu, chart
-    "ordre":   "order",    # order, command, organization, religious order
-    "temps":   "time",     # time, weather, tense (grammaire)
-    "classe":  "class",    # class, classroom, elegance, grade
-    "feu":     "fire",     # fire, light, late (défunt), feu tricolore
-}
-
-# Scores manuels basés sur les dictionnaires FR (TLFi, Larousse)
-# Nombre de sens / acceptions distincts recensés
 SCORES_MANUELS = {
     "patron":  5,   # employeur, saint patron, modèle de couture, skipper, protecteur
     "bouton":  5,   # vêtement, acné, interrupteur, bourgeon, sonnette
@@ -60,112 +35,45 @@ SCORES_MANUELS = {
 }
 
 
-def score_wordnet_anglais(mot_fr: str, traductions: dict) -> dict:
-    """
-    Compte le nombre de synsets WordNet pour la traduction anglaise du mot.
-    Retourne aussi le nombre de lemmes (formes) et de définitions.
-    """
-    try:
-        import nltk
-        try:
-            from nltk.corpus import wordnet as wn
-            wn.synsets("test")  # vérifier si les données sont là
-        except LookupError:
-            nltk.download("wordnet", quiet=True)
-            nltk.download("omw-1.4", quiet=True)
-            from nltk.corpus import wordnet as wn
-
-        mot_en = traductions.get(mot_fr, mot_fr)
-        synsets = wn.synsets(mot_en)
-
-        if not synsets:
-            return {"source": "wordnet_en", "n_synsets": None, "definitions": []}
-
-        definitions = [s.definition() for s in synsets]
-        return {
-            "source":      "wordnet_en",
-            "mot_en":      mot_en,
-            "n_synsets":   len(synsets),
-            "n_lemmes":    sum(len(s.lemmas()) for s in synsets),
-            "definitions": definitions[:5],  # les 5 premiers
-        }
-    except Exception as e:
-        return {"source": "wordnet_en", "erreur": str(e), "n_synsets": None}
-
-
-def score_manuel(mot: str, scores: dict) -> dict:
-    """Retourne le score manuel basé sur les dictionnaires français."""
-    n = scores.get(mot)
-    if n is None:
-        return {"source": "manuel", "n_sens": None}
-    return {"source": "manuel", "n_sens": n}
-
-
 def construire_gold_standard(mots: list, dossier: str = "resultats") -> pd.DataFrame:
     """
-    Pour chaque mot, récupère :
-    - n_synsets_en  : nombre de synsets WordNet anglais
-    - n_sens_manuel : nombre de sens selon les dictionnaires français
-    - score_gold    : combinaison normalisée (moyenne des deux)
+    Construit le gold standard à partir des scores manuels TLFi/Larousse.
+    Normalise les scores en [0, 1] via min-max pour la comparaison avec le score BERT.
     """
     Path(dossier).mkdir(exist_ok=True)
     lignes = []
 
-    print("\n Construction du gold standard linguistique :\n")
+    print("\n Construction du gold standard (TLFi / Larousse) :\n")
     for mot in mots:
-        row = {"mot": mot}
-
-        # WordNet anglais
-        wn_res = score_wordnet_anglais(mot, TRADUCTIONS_EN)
-        row["n_synsets_en"]  = wn_res.get("n_synsets")
-        row["mot_en"]        = wn_res.get("mot_en", TRADUCTIONS_EN.get(mot, "?"))
-        row["definitions_wn"] = " | ".join(wn_res.get("definitions", [])[:3])
-
-        # Score manuel
-        man_res = score_manuel(mot, SCORES_MANUELS)
-        row["n_sens_manuel"] = man_res.get("n_sens")
-
-        # Score gold combiné (normalisation min-max)
-        valeurs = [v for v in [row["n_synsets_en"], row["n_sens_manuel"]] if v is not None]
-        row["score_gold_brut"] = np.mean(valeurs) if valeurs else None
-
-        print(
-            f"  {mot:<12} | synsets_EN={str(row['n_synsets_en']):<6} "
-            f"| sens_FR={str(row['n_sens_manuel']):<4} "
-            f"| gold_brut={str(round(row['score_gold_brut'], 2)) if row['score_gold_brut'] else 'N/A'}"
-        )
-        lignes.append(row)
+        n_sens = SCORES_MANUELS.get(mot)
+        if n_sens is None:
+            print(f"    « {mot} » absent de SCORES_MANUELS — à compléter")
+        lignes.append({"mot": mot, "n_sens_manuel": n_sens})
 
     df = pd.DataFrame(lignes).set_index("mot")
 
-    # Normalisation min-max du score gold
-    g = df["score_gold_brut"].dropna()
+    # Normalisation min-max → score_gold dans [0, 1]
+    g = df["n_sens_manuel"].dropna()
     if g.max() != g.min():
-        df["score_gold"] = (df["score_gold_brut"] - g.min()) / (g.max() - g.min())
+        df["score_gold"] = (df["n_sens_manuel"] - g.min()) / (g.max() - g.min())
     else:
         df["score_gold"] = 0.5
 
-    # Sauvegarder
     chemin = Path(dossier) / "gold_standard.csv"
     df.to_csv(chemin)
-    print(f"\n Gold standard sauvegardé : {chemin}")
+    print(f" Gold standard sauvegardé : {chemin}")
     return df
 
 
 def afficher_gold_standard(df: pd.DataFrame):
-    """Affiche le tableau du gold standard de manière lisible."""
-    print("\n" + "═" * 75)
-    print(f"{'Mot':<14} {'Synsets EN':<13} {'Sens FR':<12} {'Gold brut':<12} {'Gold norm.':<10}")
-    print("─" * 75)
-    df_trie = df.sort_values("score_gold", ascending=False)
-    for mot, row in df_trie.iterrows():
-        barre = "█" * int((row["score_gold"] or 0) * 20)
-        print(
-            f"{mot:<14} {str(row['n_synsets_en']):<13} {str(row['n_sens_manuel']):<12} "
-            f"{round(row['score_gold_brut'], 2) if row['score_gold_brut'] else 'N/A':<12} "
-            f"{round(row['score_gold'], 3) if row['score_gold'] else 'N/A':<10}  {barre}"
-        )
-    print("═" * 75)
+    """Affiche le classement des mots par nombre de sens."""
+    print("\n" + "═" * 55)
+    print(f"{'Rang':<6} {'Mot':<14} {'Sens (TLFi)':<14} {'Gold norm.'}")
+    print("─" * 55)
+    for rang, (mot, row) in enumerate(df.sort_values("score_gold", ascending=False).iterrows(), 1):
+        barre = "█" * int((row["score_gold"] or 0) * 25)
+        print(f"{rang:<6} {mot:<14} {str(row['n_sens_manuel']):<14} {row['score_gold']:.3f}  {barre}")
+    print("═" * 55)
 
 
 def charger_gold_standard(dossier: str = "resultats") -> pd.DataFrame:
@@ -183,4 +91,4 @@ if __name__ == "__main__":
     df_gold = construire_gold_standard(mots)
     afficher_gold_standard(df_gold)
 
-    print("\n Gold terminé.")
+    print("\n Étape 6 terminée.")

@@ -18,7 +18,7 @@ def charger_corpus(chemin: Path = CORPUS_PATH) -> dict:
     """Charge le corpus depuis un fichier JSON."""
     with open(chemin, "r", encoding="utf-8") as f:
         corpus = json.load(f)
-    print(f"Corpus chargé : {len(corpus)} mots, "
+    print(f" Corpus chargé : {len(corpus)} mots, "
           f"{sum(len(v) for v in corpus.values())} phrases au total")
     for mot, phrases in corpus.items():
         print(f"   {mot:<12} : {len(phrases)} phrases")
@@ -56,34 +56,45 @@ def charger_modele(nom_modele: str = "camembert-base"):
     model.eval()
     device = get_device()
     model.to(device)
-    print(f"Modèle chargé sur {device}")
+    print(f" Modèle chargé sur {device}")
     return tokenizer, model, device
 
 
 def trouver_positions_token(tokenizer, phrase: str, mot: str):
     """
-    Retourne les indices (dans la séquence tokenisée) correspondant
-    au mot cible, en gérant le découpage en sous-mots.
+    Retourne les indices (dans la séquence tokenisée, +1 pour [CLS])
+    des sous-tokens correspondant à une occurrence du mot cible.
+
+    Utilise re.search avec \\b (frontière de mot) sur chaque token reconstruit.
+    Gère naturellement :
+      - la casse       : "Bouton" → "bouton"
+      - la ponctuation : "feuille," "(feuille)" "feuille."
+      - les composés   : "bouton-d'or", "branche-et-feuille"
+      - les faux positifs : "verre" ne matche pas "renversé"
+
+    Retourne la PREMIÈRE occurrence valide trouvée.
     """
+    import re
     tokens = tokenizer.tokenize(phrase)
-    # CamemBERT utilise ▁ comme marqueur de début de mot
     mot_lower = mot.lower()
-    positions = []
+    # Pattern : mot cible entre frontières de mots (non-alphanumériques)
+    pattern = re.compile(r'\b' + re.escape(mot_lower) + r'\b', re.IGNORECASE)
+
     i = 0
     while i < len(tokens):
-        # Reconstituer le mot depuis les sous-tokens
+        # Reconstituer la forme complète depuis les sous-tokens
         subtokens = [tokens[i].lstrip("▁")]
         j = i + 1
         while j < len(tokens) and not tokens[j].startswith("▁"):
             subtokens.append(tokens[j])
             j += 1
-        mot_reconstruit = "".join(subtokens).lower()
-        if mot_reconstruit == mot_lower:
-            # +1 pour le token [CLS]
-            positions = list(range(i + 1, j + 1))
-            break
+        forme = "".join(subtokens)
+
+        if pattern.search(forme):
+            return list(range(i + 1, j + 1))  # +1 pour [CLS]
         i = j
-    return positions
+
+    return []
 
 
 def extraire_embedding(
@@ -98,18 +109,13 @@ def extraire_embedding(
     Extrait l'embedding contextuel du mot dans la phrase.
     Stratégie : moyenne des 4 dernières couches cachées,
     puis moyenne sur les sous-tokens du mot cible.
-    Retourne None si le mot n'est pas trouvé.
+    Retourne None si le mot n'est pas trouvé sous aucune forme.
     """
     encoding = tokenizer(phrase, return_tensors="pt", truncation=True, max_length=512)
     encoding = {k: v.to(device) for k, v in encoding.items()}
 
     positions = trouver_positions_token(tokenizer, phrase, mot)
-    if not positions:
-        # Tentative avec les formes fléchies simples (pluriel en s)
-        for variante in [mot + "s", mot + "e", mot + "es", mot[:-1]]:
-            positions = trouver_positions_token(tokenizer, phrase, variante)
-            if positions:
-                break
+
     if not positions:
         return None
 
@@ -158,7 +164,7 @@ def sauvegarder_embeddings(embeddings: dict, dossier: str = "resultats"):
         np.save(chemin, arr)
     # Sauvegarder aussi les métadonnées
     meta = {mot: arr.shape[0] for mot, arr in embeddings.items()}
-    with open(Path(dossier) / "metadata.json", "w") as f:
+    with open(Path(dossier) / "metadata.json", "w", encoding="utf-8") as f:
         json.dump(meta, f, ensure_ascii=False, indent=2)
     print(f"\n Embeddings sauvegardés dans « {dossier}/ »")
 
@@ -181,4 +187,4 @@ if __name__ == "__main__":
     tokenizer, model, device = charger_modele("camembert-base")
     embeddings = extraire_tous_embeddings(tokenizer, model, device, CORPUS)
     sauvegarder_embeddings(embeddings)
-    print("\n Embeddings terminé.")
+    print("\n Étape 3 terminée.")
