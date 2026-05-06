@@ -110,7 +110,7 @@ def figure_globale(embeddings: dict, dossier_sortie: str = "resultats/figures"):
 
     ax.legend(handles=legendes, loc="upper right", fontsize=10)
     ax.set_title("Projection UMAP — Comparaison de la dispersion par mot\n"
-                 "(dispersion large = forte polysémie)", fontsize=13)
+                 "(Une dispersion plus large = une plus grande variation d’usage)", fontsize=13)
     ax.set_xlabel("Dimension 1")
     ax.set_ylabel("Dimension 2")
     ax.grid(True, alpha=0.2)

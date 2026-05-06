@@ -11,33 +11,53 @@ from pathlib import Path
 
 # ─────────────────────────────────────────────
 # Scores basés sur les dictionnaires français
-# Source : TLFi (Trésor de la Langue Française informatisé) et Larousse
+# Source : TLFi (Trésor de la Langue Française informatisé), Larousse et Robert
 # Chaque entrée = nombre de sens / acceptions distincts recensés
 # ─────────────────────────────────────────────
+# Gold standard manuel — macro-sens
+# Sens regroupés à partir du TLFi / Larousse/ Robert
+# ─────────────────────────────────────────────
+
 SCORES_MANUELS = {
-    "patron":  5,   # employeur, saint patron, modèle de couture, skipper, protecteur
-    "bouton":  5,   # vêtement, acné, interrupteur, bourgeon, sonnette
-    "feuille": 5,   # végétal, papier, journal, feuille d'imposition, tôle
-    "coup":    12,  # frappe, bruit, fois, tentative, influence, coup d'État...
-    "cœur":    6,   # organe, sentiment, courage, carte, centre, estomac
-    "maison":  4,   # bâtiment, famille, entreprise, fait maison
-    "vague":   7,   # onde, imprécis, mouvement de foule, nouvelle vague, terrain vague...
-    "rayon":   6,   # lumière, géométrie, linéaire de supermarché, roue, département, ruche
-    "verre":   5,   # matière, récipient, contenu, lunettes, vitre
-    "lettre":  6,   # courrier, caractère typographique, littérature, lettre de change, au pied de la lettre
-    "mousse":  5,   # végétal, écume, matériau, marin débutant, entremets
-    "corps":   8,   # anatomie, cadavre, groupe armé, substance chimique, corps enseignant, typographie...
-    "carte":   6,   # géographique, identité, menu, bancaire, jeu de cartes, carte blanche
-    "ordre":   7,   # commandement, organisation, religieux, chevalerie, classement, ordre du jour...
-    "temps":   6,   # durée, météo, époque, grammaire, mesure musicale, mi-temps
-    "classe":  6,   # salle, niveau scolaire, catégorie sociale, élégance, taxonomie, année militaire
-    "feu":     7,   # combustion, lumière, signalisation, défunt, tir d'arme, ardeur, feu de camp
+    "coup":    12,  # choc/frappe; blessure; arme à feu; épreuve; mouvement; action avec objet; signal/bruit; événement soudain; émotion soudaine; jeu/sport; action stratégique; quantité/fois/locutions
+
+    "ordre":   9,  # organisation/disposition; ordre mathématique; ordre social/public; norme/conformité; catégorie/classement; valeur/qualité; architecture/taxonomie; ordre religieux/honorifique; commandement/mot d'ordre
+
+    "temps":   8,  # durée; temps disponible/mesurable; période/moment; époque historique; météo; temps grammatical; mesure musicale/sportive; moment opportun/locutions
+
+    "corps":   8,  # organisme; cadavre; tronc/partie du corps; personne/individu; partie principale d'un objet/texte; substance/objet physique; groupe institutionnel/militaire; typographie/mathématiques
+
+    "feu":     8,  # combustion/flamme/chaleur; incendie/destruction; cuisson/foyer domestique; arme/tir/détonation; lumière/signal/éclat; ardeur/passion; feu d'artifice/camp; défunt
+
+    "carte":   8,  # support papier/carton; carte à jouer; menu; document personnel/administratif/bancaire; carte postale/visite; carte informatique; carte géographique; schéma/représentation
+
+    "rayon":   7,  # lumière; radiation/rayons X; géométrie; roue/disposition radiale; zone/distance d'action; ruche; étagère/domaine commercial
+
+    "vague":   7,  # onde d'eau; mouvement collectif/afflux; phénomène météorologique; forme ondulée; imprécis/flou; ample/non ajusté; emploi nominal/nerf vague
+
+    "classe":  7,  # catégorie; classe sociale; classe biologique/taxonomique; rang/niveau; distinction/allure; groupe d'élèves/cours/salle; contingent militaire
+
+    "cœur":    6,  # organe; centre/partie centrale; essentiel/moment fort; affectivité/amour/bonté; moral/courage/intériorité; symbole/cartes/locution par cœur
+
+    "lettre":  6,  # caractère alphabétique; typographie; forme littérale d'un texte; courrier/correspondance; document officiel/administratif; lettres/culture humaniste
+
+    "patron":  5,  # saint/protecteur; chef/employeur; responsable institutionnel/professionnel; modèle/gabarit; patron de recherche/travaux intellectuels
+
+    "feuille": 5,  # organe végétal; papier/page; document/journal; plaque mince de matière; oreille/sens figuré ou spécialisé
+
+    "bouton":  5,  # bourgeon floral; lésion cutanée; pièce de vêtement; commande mécanique/électrique; bouton informatique
+
+    "verre":   5,  # matière; objet/pièce en verre; récipient; contenu/boisson; verre optique/lunettes/vitre
+
+    "mousse":  5,  # plante; écume/bulles; boisson/bière; préparation alimentaire; matière spongieuse/synthétique
+
+    "maison":  5,  # bâtiment d'habitation; foyer/domicile; service domestique/vie domestique; entreprise/institution; famille/lignée/adjectif maison
 }
 
 
 def construire_gold_standard(mots: list, dossier: str = "resultats") -> pd.DataFrame:
     """
-    Construit le gold standard à partir des scores manuels TLFi/Larousse.
+    Construit le gold standard à partir des scores manuels TLFi/Larousse/Robert.
     Normalise les scores en [0, 1] via min-max pour la comparaison avec le score BERT.
     """
     Path(dossier).mkdir(exist_ok=True)

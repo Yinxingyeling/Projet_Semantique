@@ -7,7 +7,7 @@ import numpy as np
 import torch
 from transformers import AutoTokenizer, AutoModel
 from pathlib import Path
-
+import re
 # ─────────────────────────────────────────────
 # Chargement du corpus depuis le fichier JSON
 # Format attendu : { "mot": ["phrase1", "phrase2", ...], ... }
@@ -49,52 +49,103 @@ def get_device():
 
 
 def charger_modele(nom_modele: str = "camembert-base"):
-    """Charge le tokenizer et le modèle BERT."""
+    """Charge le tokenizer et le modèle CamemBERT."""
     print(f" Chargement du modèle {nom_modele}…")
-    tokenizer = AutoTokenizer.from_pretrained(nom_modele)
-    model = AutoModel.from_pretrained(nom_modele, output_hidden_states=True)
+
+    tokenizer = AutoTokenizer.from_pretrained(
+        nom_modele,
+        use_fast=True
+    )
+
+    if not tokenizer.is_fast:
+        raise ValueError("Il faut utiliser un fast tokenizer pour return_offsets_mapping=True.")
+
+    model = AutoModel.from_pretrained(
+        nom_modele,
+        output_hidden_states=True
+    )
+
     model.eval()
     device = get_device()
     model.to(device)
+
     print(f" Modèle chargé sur {device}")
     return tokenizer, model, device
 
-
-def trouver_positions_token(tokenizer, phrase: str, mot: str):
+def trouver_span_mot(phrase: str, mot: str):
     """
-    Retourne les indices (dans la séquence tokenisée, +1 pour [CLS])
-    des sous-tokens correspondant à une occurrence du mot cible.
+    Trouve la première occurrence valide du mot cible dans la phrase.
+    Retourne le span caractère (start, end).
 
-    Utilise re.search avec \\b (frontière de mot) sur chaque token reconstruit.
-    Gère naturellement :
-      - la casse       : "Bouton" → "bouton"
-      - la ponctuation : "feuille," "(feuille)" "feuille."
-      - les composés   : "bouton-d'or", "branche-et-feuille"
-      - les faux positifs : "verre" ne matche pas "renversé"
+    On évite les faux positifs comme :
+      - coup dans beaucoup
+      - temps dans longtemps
+      - verre dans renverre
 
-    Retourne la PREMIÈRE occurrence valide trouvée.
+    Mais on accepte :
+      - feuille,
+      - (feuille)
+      - feuille.
+      - bouton-d'or  -> le span retourné correspond seulement à bouton
     """
-    import re
-    tokens = tokenizer.tokenize(phrase)
-    mot_lower = mot.lower()
-    # Pattern : mot cible entre frontières de mots (non-alphanumériques)
-    pattern = re.compile(r'\b' + re.escape(mot_lower) + r'\b', re.IGNORECASE)
+    pattern = re.compile(
+        rf"(?<![A-Za-zÀ-ÖØ-öø-ÿ]){re.escape(mot)}(?![A-Za-zÀ-ÖØ-öø-ÿ])",
+        re.IGNORECASE
+    )
 
-    i = 0
-    while i < len(tokens):
-        # Reconstituer la forme complète depuis les sous-tokens
-        subtokens = [tokens[i].lstrip("▁")]
-        j = i + 1
-        while j < len(tokens) and not tokens[j].startswith("▁"):
-            subtokens.append(tokens[j])
-            j += 1
-        forme = "".join(subtokens)
+    match = pattern.search(phrase)
 
-        if pattern.search(forme):
-            return list(range(i + 1, j + 1))  # +1 pour [CLS]
-        i = j
+    if match is None:
+        return None
 
-    return []
+    return match.start(), match.end()
+
+
+def trouver_positions_token_offset(tokenizer, phrase: str, mot: str, max_length: int = 512):
+    """
+    Retourne les indices des sous-tokens correspondant au mot cible,
+    en utilisant offset_mapping.
+
+    Contrairement à la méthode qui reconstruit les tokens,
+    cette version ne retourne que les sous-tokens qui chevauchent
+    exactement la zone caractère du mot cible.
+
+    Exemple :
+      phrase = "Il cueille un bouton-d'or."
+      mot = "bouton"
+
+    Elle retourne seulement le token de "bouton",
+    pas les tokens de "-d'or".
+    """
+    span = trouver_span_mot(phrase, mot)
+
+    if span is None:
+        return []
+
+    start, end = span
+
+    encoded = tokenizer(
+        phrase,
+        return_tensors="pt",
+        return_offsets_mapping=True,
+        truncation=True,
+        max_length=max_length
+    )
+
+    offsets = encoded["offset_mapping"][0].tolist()
+
+    positions = []
+
+    for i, (tok_start, tok_end) in enumerate(offsets):
+        # tokens spéciaux : <s>, </s>, padding éventuel
+        if tok_start == tok_end:
+            continue
+
+        # token et mot cible ont une intersection
+        if tok_start < end and tok_end > start:
+            positions.append(i)
+
+    return positions
 
 
 def extraire_embedding(
@@ -107,32 +158,60 @@ def extraire_embedding(
 ):
     """
     Extrait l'embedding contextuel du mot dans la phrase.
-    Stratégie : moyenne des 4 dernières couches cachées,
-    puis moyenne sur les sous-tokens du mot cible.
-    Retourne None si le mot n'est pas trouvé sous aucune forme.
-    """
-    encoding = tokenizer(phrase, return_tensors="pt", truncation=True, max_length=512)
-    encoding = {k: v.to(device) for k, v in encoding.items()}
 
-    positions = trouver_positions_token(tokenizer, phrase, mot)
+    Stratégie :
+      1. trouver le span caractère du mot cible dans la phrase ;
+      2. utiliser offset_mapping pour retrouver les sous-tokens correspondants ;
+      3. moyenner les 4 dernières couches cachées ;
+      4. moyenner les sous-tokens du mot cible.
+
+    Retourne None si le mot n'est pas trouvé.
+    """
+    encoding = tokenizer(
+        phrase,
+        return_tensors="pt",
+        return_offsets_mapping=True,
+        truncation=True,
+        max_length=512
+    )
+
+    offsets = encoding.pop("offset_mapping")[0].tolist()
+
+    span = trouver_span_mot(phrase, mot)
+
+    if span is None:
+        return None
+
+    start, end = span
+
+    positions = []
+
+    for i, (tok_start, tok_end) in enumerate(offsets):
+        if tok_start == tok_end:
+            continue
+
+        if tok_start < end and tok_end > start:
+            positions.append(i)
 
     if not positions:
         return None
 
+    encoding = {k: v.to(device) for k, v in encoding.items()}
+
     with torch.no_grad():
         sorties = model(**encoding)
 
-    # hidden_states : tuple de (n_couches+1) tenseurs de shape (1, seq_len, 768)
-    hidden_states = sorties.hidden_states  # inclut la couche d'embedding initiale
+    hidden_states = sorties.hidden_states
 
-    # Sélectionner les couches et calculer la moyenne
     vecteurs_couches = torch.stack(
-        [hidden_states[c] for c in couches], dim=0
-    )  # (n_couches, 1, seq_len, 768)
-    moyenne_couches = vecteurs_couches.mean(dim=0).squeeze(0)  # (seq_len, 768)
+        [hidden_states[c] for c in couches],
+        dim=0
+    )
 
-    # Moyenne sur les sous-tokens du mot cible
-    embedding_mot = moyenne_couches[positions].mean(dim=0)  # (768,)
+    moyenne_couches = vecteurs_couches.mean(dim=0).squeeze(0)
+
+    embedding_mot = moyenne_couches[positions].mean(dim=0)
+
     return embedding_mot.cpu().numpy()
 
 
