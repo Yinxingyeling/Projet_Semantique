@@ -19,30 +19,23 @@ PALETTE = [
 ]
 
 
-def reduire_dimensions(embeddings_concat: np.ndarray, methode: str = "umap", seed: int = 42):
+def reduire_dimensions(embeddings_concat: np.ndarray, seed: int = 42):
     """
-    Réduit les embeddings en 2D.
-    methode : 'umap' (recommandé) ou 'tsne'
+    Réduit les embeddings en 2D avec UMAP.
     """
-    if methode == "umap":
-        try:
-            from umap import UMAP
-            reducer = UMAP(n_components=2, random_state=seed, n_neighbors=10, min_dist=0.1)
-            print("  Réduction UMAP…")
-        except ImportError:
-            print("  umap-learn non installé, passage à t-SNE.")
-            methode = "tsne"
+    from umap import UMAP
 
-    if methode == "tsne":
-        from sklearn.manifold import TSNE
-        n = len(embeddings_concat)
-        perplexite = min(30, n // 3)
-        reducer = TSNE(n_components=2, random_state=seed, perplexity=perplexite)
-        print(f"  Réduction t-SNE (perplexité={perplexite})…")
+    reducer = UMAP(
+        n_components=2,
+        random_state=seed,
+        n_neighbors=10,
+        min_dist=0.1
+    )
 
+    print("  Réduction UMAP…")
     coords = reducer.fit_transform(embeddings_concat)
-    return coords
 
+    return coords
 
 def figure_par_mot(embeddings: dict, dossier_sortie: str = "resultats/figures"):
     """
@@ -53,7 +46,7 @@ def figure_par_mot(embeddings: dict, dossier_sortie: str = "resultats/figures"):
 
     for mot, arr in embeddings.items():
         n = len(arr)
-        coords = reduire_dimensions(arr, methode="umap")
+        coords = reduire_dimensions(arr)
 
         fig, ax = plt.subplots(figsize=(8, 6))
         scatter = ax.scatter(
@@ -89,7 +82,7 @@ def figure_globale(embeddings: dict, dossier_sortie: str = "resultats/figures"):
     labels = np.concatenate([[i] * len(embeddings[m]) for i, m in enumerate(mots)])
 
     print("\n Projection globale (tous les mots ensemble)…")
-    coords = reduire_dimensions(concat, methode="umap")
+    coords = reduire_dimensions(concat)
 
     fig, ax = plt.subplots(figsize=(12, 9))
     legendes = []
